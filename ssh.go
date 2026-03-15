@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,33 +16,60 @@ import (
 	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/ssh"
 	"github.com/creack/pty"
-
 	"github.com/ghibranalj/janus-ssh/tui"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type SSHServer struct {
-	address     string
-	hostKeyPath string
-	repo        tui.ServerRepository
-	server      *ssh.Server
+	address      string
+	hostKeyFile  string
+	authKeyPath  string
+	passwordHash string
+	repo         tui.ServerRepository
+	server       *ssh.Server
 }
 
-func NewSSHServer(address, hostKeyPath string, repo tui.ServerRepository) *SSHServer {
+func NewSSHServer(address, hostKeyFile, authKeyPath, passwordHash string, repo tui.ServerRepository) *SSHServer {
 	return &SSHServer{
-		address:     address,
-		hostKeyPath: hostKeyPath,
-		repo:        repo,
+		address:      address,
+		hostKeyFile:  hostKeyFile,
+		authKeyPath:  authKeyPath,
+		passwordHash: passwordHash,
+		repo:         repo,
 	}
 }
 
 func (s *SSHServer) Start() error {
 	var err error
-	s.server, err = wish.NewServer(
+
+	opts := []ssh.Option{
+		wish.WithHostKeyPath(s.hostKeyFile),
 		wish.WithAddress(s.address),
 		wish.WithMiddleware(
 			activeterm.Middleware(), // Bubble Tea apps usually require a PTY.
 			logging.Middleware(),
 		),
+	}
+
+	if s.authKeyPath != "" {
+		opts = append(opts, wish.WithAuthorizedKeys(s.authKeyPath))
+	}
+
+	if s.passwordHash != "" {
+		opts = append(opts,
+			wish.WithPasswordAuth(func(ctx ssh.Context, password string) bool {
+				err := bcrypt.CompareHashAndPassword([]byte(s.passwordHash), []byte(password))
+				return err == nil
+			}),
+		)
+	}
+
+	if s.authKeyPath == "" && s.passwordHash == "" {
+		return errors.New("either password_hash or authorized_keys_path must be set, or both!")
+	}
+
+	s.server, err = wish.NewServer(
+		opts...,
 	)
 	if err != nil {
 		return fmt.Errorf("could not create server: %w", err)

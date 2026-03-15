@@ -1,0 +1,40 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+janus-ssh
+
+# Test and coverage files
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Environment files (use docker-compose env instead)
+.env
+.env.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Keys (should be mounted as volumes)
+*.keys
+authorized_keys
+host_key*
+
+# Data files (should be mounted as volumes)
+servers.json

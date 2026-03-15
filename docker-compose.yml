@@ -1,0 +1,30 @@
+services:
+  janus-ssh:
+    build: .
+    container_name: janus-ssh
+    restart: unless-stopped
+    ports:
+      - "2222:2222"
+    environment:
+      # Port configuration
+      - PORT=2222
+
+      # Host key for the SSH server (auto-generated if not provided)
+      - HOST_KEY_FILE=/app/keys/host_key
+
+      # Authentication: Use either password, public key, or both
+      # Generate password hash with: htpasswd -bnBC 10 "" "" | tr -d ':\n'
+      - PASSWORD_HASH=
+
+      # Or use authorized keys (mount your public keys)
+      - AUTH_KEY_FILE=/app/keys/authorized_keys
+
+    volumes:
+      # Persist SSH host keys
+      - ./keys:/app/keys
+
+      # Persist server configurations
+      - ./data:/app/data
+
+      # Optional: Mount your SSH config for known_hosts
+      - ~/.ssh/known_hosts:/root/.ssh/known_hosts:ro

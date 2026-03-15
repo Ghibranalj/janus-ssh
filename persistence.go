@@ -42,7 +42,6 @@ func (r *ServerRepository) List() ([]tui.Server, error) {
 
 func (r *ServerRepository) Add(server tui.Server) error {
 
-	fmt.Printf("adding %s\n", server.String())
 	servers, err := r.List()
 	if err != nil {
 		return err
@@ -60,7 +59,23 @@ func (r *ServerRepository) Add(server tui.Server) error {
 	return r.save(servers)
 }
 
-func (r *ServerRepository) Remove(user, host string) error {
+func (r *ServerRepository) Update(oldUser, oldHost string, newServer tui.Server) error {
+	servers, err := r.List()
+	if err != nil {
+		return err
+	}
+
+	for i, s := range servers {
+		if s.User == oldUser && s.Host == oldHost {
+			servers[i] = newServer
+			return r.save(servers)
+		}
+	}
+
+	return fmt.Errorf("server not found")
+}
+
+func (r *ServerRepository) Delete(user, host string) error {
 	servers, err := r.List()
 	if err != nil {
 		return err

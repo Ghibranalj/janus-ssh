@@ -14,4 +14,6 @@ func (s Server) String() string {
 type ServerRepository interface {
 	List() ([]Server, error)
 	Add(server Server) error
+	Update(oldUser, oldHost string, newServer Server) error
+	Delete(user, host string) error
 }

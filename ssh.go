@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +14,7 @@ import (
 	"charm.land/wish/v2/bubbletea"
 	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/ssh"
+	"github.com/creack/pty"
 
 	"github.com/ghibranalj/janus-ssh/tui"
 )
@@ -36,7 +39,6 @@ func (s *SSHServer) Start() error {
 	s.server, err = wish.NewServer(
 		wish.WithAddress(s.address),
 		wish.WithMiddleware(
-			bubbletea.Middleware(s.teaHandler),
 			activeterm.Middleware(), // Bubble Tea apps usually require a PTY.
 			logging.Middleware(),
 		),
@@ -44,6 +46,8 @@ func (s *SSHServer) Start() error {
 	if err != nil {
 		return fmt.Errorf("could not create server: %w", err)
 	}
+
+	s.server.Handle(s.Handle)
 
 	done := make(chan os.Signal, 1)
 
@@ -68,6 +72,68 @@ func (s *SSHServer) Shutdown() error {
 	return nil
 }
 
-func (s *SSHServer) teaHandler(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
-	return tui.NewApp(s.repo, sess), []tea.ProgramOption{}
+func (s *SSHServer) Handle(session ssh.Session) {
+	opts := bubbletea.MakeOptions(session)
+	tui.RestoreTerminal(session)
+	for {
+		tuiApp := tui.NewApp(s.repo)
+		p := tea.NewProgram(tuiApp, opts...)
+		m, err := p.Run()
+		if err != nil {
+			fmt.Fprintf(session, "Error: %s", err.Error())
+		}
+
+		model, ok := m.(*tui.AppModel)
+
+		if !ok {
+			fmt.Println("WTF")
+			return
+		}
+
+		if model.Exit {
+			tui.RestoreTerminal(session)
+			return
+		}
+		SSH(session, model.Server)
+	}
+}
+
+func SSH(session ssh.Session, server string) {
+	tui.RestoreTerminal(session)
+
+	fmt.Fprintf(session, "ssh to %s....\n", server)
+
+	ptyReq, winCh, _ := session.Pty()
+
+	cmd := exec.Command("ssh", server)
+	cmd.Env = append(cmd.Env, fmt.Sprintf("TERM=%s", ptyReq.Term))
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		fmt.Fprintf(session, "Error: %s", err.Error())
+	}
+	defer ptmx.Close()
+
+	// Handle window size changes
+	if winCh != nil {
+		go func() {
+			for win := range winCh {
+				pty.Setsize(ptmx, &pty.Winsize{
+					Rows: uint16(win.Height),
+					Cols: uint16(win.Width),
+				})
+			}
+		}()
+	}
+
+	// Copy bidirectional IO
+	// Input: user -> SSH (use goroutine)
+	go func() {
+		io.Copy(ptmx, session)
+	}()
+	// Output: SSH -> user (blocking)
+	io.Copy(session, ptmx)
+
+	cmd.Wait()
+	tui.RestoreTerminal(session)
 }

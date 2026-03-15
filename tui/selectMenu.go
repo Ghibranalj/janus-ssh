@@ -28,9 +28,21 @@ func (m *SelectMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
-			return m, tea.Quit
+			return m, func() tea.Msg { return exitTUI{} }
 		case "a":
 			return m, func() tea.Msg { return SwitchToAddMsg{} }
+		case "e":
+			servers, _ := m.repo.List()
+			if m.cursor >= 0 && m.cursor < len(servers) {
+				server := servers[m.cursor]
+				return m, func() tea.Msg { return SwitchToEditMsg{Server: Server{User: server.User, Host: server.Host}} }
+			}
+		case "d":
+			servers, _ := m.repo.List()
+			if m.cursor >= 0 && m.cursor < len(servers) {
+				server := servers[m.cursor]
+				return m, func() tea.Msg { return ServerDeletedMsg{User: server.User, Host: server.Host} }
+			}
 		case "up":
 			servers, _ := m.repo.List()
 			if m.cursor > 0 {
@@ -84,7 +96,7 @@ func (m *SelectMenu) View() tea.View {
 
 	// Help text
 	b.WriteString("\n")
-	b.WriteString(HelpText.Render("q: Quit | a: Add new server"))
+	b.WriteString(HelpText.Render("q: Quit | a: Add new server | e: Edit server | d: Delete server"))
 
 	return tea.NewView(b.String())
 }

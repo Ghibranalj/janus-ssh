@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -57,14 +58,33 @@ func (m *SelectMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *SelectMenu) View() tea.View {
 	servers, _ := m.repo.List()
-	v := "Select server:\n\n"
+
+	var b strings.Builder
+
+	// Title
+	b.WriteString(Title.Render("Select server"))
+	b.WriteString("\n\n")
+
+	// Server list
 	for i, server := range servers {
 		cursor := " "
 		if m.cursor == i {
-			cursor = ">"
+			cursor = Cursor.Render(">")
 		}
-		v += fmt.Sprintf("%s %s\n", cursor, server.String())
+
+		var itemText string
+		if m.cursor == i {
+			itemText = SelectedItem.Render(server.String())
+		} else {
+			itemText = NormalItem.Render(server.String())
+		}
+
+		b.WriteString(fmt.Sprintf("%s %s\n", cursor, itemText))
 	}
-	v += "\nq to quit | a: Add new server\n"
-	return tea.NewView(v)
+
+	// Help text
+	b.WriteString("\n")
+	b.WriteString(HelpText.Render("q: Quit | a: Add new server"))
+
+	return tea.NewView(b.String())
 }

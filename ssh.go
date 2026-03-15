@@ -1,78 +1,73 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"os/exec"
+	"os"
+	"time"
 
-	"github.com/creack/pty"
-	"github.com/gliderlabs/ssh"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/wish/v2"
+	"charm.land/wish/v2/activeterm"
+	"charm.land/wish/v2/bubbletea"
+	"charm.land/wish/v2/logging"
+	"github.com/charmbracelet/ssh"
 
 	"github.com/ghibranalj/janus-ssh/tui"
 )
 
-func SshHandler(s ssh.Session, repo tui.ServerRepository) {
-	ptyReq, winCh, ok := s.Pty()
+type SSHServer struct {
+	address     string
+	hostKeyPath string
+	repo        tui.ServerRepository
+	server      *ssh.Server
+}
 
-	tui.RestoreTerminal(s)
-
-	for {
-		selectedServer, err := tui.RunMenu(s, repo)
-		if err != nil {
-			io.WriteString(s, fmt.Sprintf("Error: %v\n", err))
-			return
-		}
-		tui.RestoreTerminal(s)
-		if selectedServer == (tui.Server{}) {
-			return
-		}
-
-		if ok {
-			err = runSSHSession(s, selectedServer.String(), ptyReq, winCh)
-			if err != nil {
-				io.WriteString(s, fmt.Sprintf("SSH error: %v\n", err))
-			}
-			tui.RestoreTerminal(s)
-		} else {
-			cmd := exec.Command("ssh", selectedServer.String())
-			cmd.Stdin = s
-			cmd.Stdout = s
-			cmd.Stderr = s
-			cmd.Run()
-		}
+func NewSSHServer(address, hostKeyPath string, repo tui.ServerRepository) *SSHServer {
+	return &SSHServer{
+		address:     address,
+		hostKeyPath: hostKeyPath,
+		repo:        repo,
 	}
 }
 
-// runSSHSession starts the SSH command with PTY support
-func runSSHSession(s ssh.Session, server string, ptyReq ssh.Pty, winCh <-chan ssh.Window) error {
-	cmd := exec.Command("ssh", server)
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TERM=%s", ptyReq.Term))
-
-	ptmx, err := pty.Start(cmd)
+func (s *SSHServer) Start() error {
+	var err error
+	s.server, err = wish.NewServer(
+		wish.WithAddress(s.address),
+		wish.WithMiddleware(
+			bubbletea.Middleware(s.teaHandler),
+			activeterm.Middleware(), // Bubble Tea apps usually require a PTY.
+			logging.Middleware(),
+		),
+	)
 	if err != nil {
-		return err
-	}
-	defer ptmx.Close()
-
-	// Window resize handler
-	if winCh != nil {
-		go func() {
-			for win := range winCh {
-				pty.Setsize(ptmx, &pty.Winsize{
-					Rows: uint16(win.Height),
-					Cols: uint16(win.Width),
-				})
-			}
-		}()
+		return fmt.Errorf("could not create server: %w", err)
 	}
 
-	// Copy stdin to PTY and stdout from PTY (bidirectional)
+	done := make(chan os.Signal, 1)
+
+	fmt.Printf("Starting SSH server on %s\n", s.address)
 	go func() {
-		io.Copy(ptmx, s)
-	}()
-	go func() {
-		io.Copy(s, ptmx)
+		if err := s.server.ListenAndServe(); err != nil {
+			fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+		}
 	}()
 
-	return cmd.Wait()
+	<-done
+	fmt.Println("Shutting down server...")
+	return s.Shutdown()
+}
+
+func (s *SSHServer) Shutdown() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.server.Shutdown(ctx); err != nil {
+		return fmt.Errorf("could not shutdown server: %w", err)
+	}
+	return nil
+}
+
+func (s *SSHServer) teaHandler(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
+	return tui.NewApp(s.repo, sess), []tea.ProgramOption{}
 }

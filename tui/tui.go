@@ -3,9 +3,11 @@ package tui
 import (
 	"fmt"
 	"io"
+	"os/exec"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/gliderlabs/ssh"
+	"github.com/charmbracelet/ssh"
+	"github.com/creack/pty"
 )
 
 // Menu transition messages
@@ -14,22 +16,29 @@ type SwitchToAddMsg struct{}
 type ServerSelectedMsg struct{ Server Server }
 type ServerAddedMsg struct{ Server Server }
 
+type sshErrorMsg struct{ err error }
+
 // appModel is the root model that coordinates between menus
 type appModel struct {
 	currentMenu    tea.Model
 	repo           ServerRepository
 	selectedServer Server
+	session        ssh.Session
 }
 
-func NewApp(repo ServerRepository) (*appModel, error) {
+func NewApp(repo ServerRepository, session ssh.Session) *appModel {
 	return &appModel{
 		currentMenu: NewSelectMenu(repo),
 		repo:        repo,
-	}, nil
+		session:     session,
+	}
 }
 
 func (m *appModel) Init() tea.Cmd {
-	return nil
+	m.ClearTerminal()
+	return tea.Batch(
+		tea.RequestBackgroundColor,
+	)
 }
 
 func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -42,11 +51,15 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentMenu = NewAddMenu()
 		return m, nil
 	case ServerSelectedMsg:
-		m.selectedServer = msg.Server
-		return m, tea.Quit
+		// Launch SSH session and return to menu when done
+		return m, m.launchSSHSession(msg.Server)
 	case ServerAddedMsg:
 		// Add to repo
 		m.repo.Add(msg.Server)
+		m.currentMenu = NewSelectMenu(m.repo)
+		return m, nil
+	case sshErrorMsg:
+		// Show error and return to menu
 		m.currentMenu = NewSelectMenu(m.repo)
 		return m, nil
 	}
@@ -61,57 +74,45 @@ func (m *appModel) View() tea.View {
 	return m.currentMenu.View()
 }
 
-// RunMenu displays the Bubble Tea menu and returns the selected server
-func RunMenu(s ssh.Session, repo ServerRepository) (Server, error) {
-	// Get PTY information
-	ptyReq, winCh, ok := s.Pty()
+func (m *appModel) launchSSHSession(server Server) tea.Cmd {
+	return func() tea.Msg {
+		m.ClearTerminal()
 
-	// Prepare environment with TERM variable
-	// This is critical for Bubble Tea to detect terminal capabilities
-	env := s.Environ()
-	if ok && ptyReq.Term != "" {
-		env = append([]string{fmt.Sprintf("TERM=%s", ptyReq.Term)}, env...)
+		ptyReq, winCh, _ := m.session.Pty()
+
+		cmd := exec.Command("ssh", server.String())
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TERM=%s", ptyReq.Term))
+
+		ptmx, err := pty.Start(cmd)
+		if err != nil {
+			return sshErrorMsg{err: err}
+		}
+		defer ptmx.Close()
+
+		if winCh != nil {
+			go func() {
+				for win := range winCh {
+					pty.Setsize(ptmx, &pty.Winsize{
+						Rows: uint16(win.Height),
+						Cols: uint16(win.Width),
+					})
+				}
+			}()
+		}
+
+		go io.Copy(ptmx, m.session)
+		io.Copy(m.session, ptmx)
+
+		cmd.Wait()
+
+		m.ClearTerminal()
+		// Return to menu after SSH exits
+		return SwitchToSelectMsg{}
 	}
+}
 
-	// Create program options
-	opts := []tea.ProgramOption{
-		tea.WithInput(s),
-		tea.WithOutput(s),
-	}
-
-	// Pass environment so Bubble Tea can detect terminal type
-	if len(env) > 0 {
-		opts = append(opts, tea.WithEnvironment(env))
-	}
-
-	// Pass initial window size since we can't query terminal
-	if ok {
-		opts = append(opts, tea.WithWindowSize(ptyReq.Window.Width, ptyReq.Window.Height))
-	}
-
-	app, err := NewApp(repo)
-	if err != nil {
-		return Server{}, err
-	}
-
-	p := tea.NewProgram(app, opts...)
-
-	// Handle window resize events
-	if ok && winCh != nil {
-		go func() {
-			for win := range winCh {
-				p.Send(tea.WindowSizeMsg{Width: win.Width, Height: win.Height})
-			}
-		}()
-	}
-
-	finalModel, err := p.Run()
-	if err != nil {
-		return Server{}, err
-	}
-
-	m := finalModel.(*appModel)
-	return m.selectedServer, nil
+func (m *appModel) ClearTerminal() {
+	RestoreTerminal(m.session)
 }
 
 // RestoreTerminal writes ANSI escape sequences to reset terminal state

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // AddMenu handles adding new servers
@@ -70,33 +71,49 @@ func (m *AddMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AddMenu) View() tea.View {
-	var s strings.Builder
-	s.WriteString("Add New Server\n\n")
+	var b strings.Builder
+
+	// Title
+	b.WriteString(Title.Render("Add New Server"))
+	b.WriteString("\n\n")
 
 	// Username field
 	usernameCursor := " "
+	var usernameStyle lipgloss.Style
 	if m.activeField == 0 {
-		usernameCursor = ">"
+		usernameCursor = Cursor.Render(">")
+		usernameStyle = FieldActive
+	} else {
+		usernameStyle = FieldInactive
 	}
-	s.WriteString(fmt.Sprintf("%s Username: %s\n", usernameCursor, m.username))
+
+	usernameLabel := FieldLabel.Render("Username:")
+	usernameValue := usernameStyle.Render(m.username)
+	b.WriteString(fmt.Sprintf("%s %s %s\n", usernameCursor, usernameLabel, usernameValue))
 
 	// Host field
 	hostCursor := " "
+	var hostStyle lipgloss.Style
 	if m.activeField == 1 {
-		hostCursor = ">"
+		hostCursor = Cursor.Render(">")
+		hostStyle = FieldActive
+	} else {
+		hostStyle = FieldInactive
 	}
-	s.WriteString(fmt.Sprintf("%s Host: %s\n", hostCursor, m.host))
+
+	hostLabel := FieldLabel.Render("Host:")
+	hostValue := hostStyle.Render(m.host)
+	b.WriteString(fmt.Sprintf("%s %s %s\n", hostCursor, hostLabel, hostValue))
 
 	// Help text
-	s.WriteString("\n")
-	s.WriteString("Tab: Switch fields\n")
-	s.WriteString("Enter: Submit\n")
-	s.WriteString("Esc: Cancel\n")
+	b.WriteString("\n")
+	b.WriteString(HelpText.Render("Tab: Switch fields | Enter: Submit | Esc: Cancel"))
 
 	// Error message
 	if m.errorMessage != "" {
-		s.WriteString(fmt.Sprintf("\nError: %s\n", m.errorMessage))
+		b.WriteString("\n\n")
+		b.WriteString(ErrorMsg.Render("Error: " + m.errorMessage))
 	}
 
-	return tea.NewView(s.String())
+	return tea.NewView(b.String())
 }

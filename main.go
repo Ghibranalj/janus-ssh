@@ -1,16 +1,21 @@
 package main
 
 import (
-	"github.com/gliderlabs/ssh"
+	"fmt"
+	"log"
 )
 
 func main() {
-	// Set up server repository
 	repo := NewServerRepository("./servers.json")
 
-	ssh.Handle(func(s ssh.Session) {
-		SshHandler(s, repo)
-	})
+	server := NewSSHServer(
+		"localhost:2222",
+		".ssh/id_ed25519",
+		repo,
+	)
 
-	ssh.ListenAndServe(":2222", nil)
+	if err := server.Start(); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
+	fmt.Println("Server stopped")
 }
